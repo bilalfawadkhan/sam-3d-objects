@@ -19,7 +19,10 @@ import subprocess
 import seaborn as sns
 from PIL import Image
 import numpy as np
-import gradio as gr
+try:
+    import gradio as gr
+except ImportError:
+    gr = None
 import matplotlib.pyplot as plt
 from copy import deepcopy
 from kaolin.visualize import IpyTurntableVisualizer
@@ -405,10 +408,13 @@ def display_image(image, masks=None):
 
 
 def interactive_visualizer(ply_path):
+    if gr is None:
+        raise RuntimeError(
+            "Gradio is not installed. Install it (`pip install gradio`) "
+            "or don't call interactive_visualizer()."
+        )
+
     with gr.Blocks() as demo:
         gr.Markdown("# 3D Gaussian Splatting (black-screen loading might take a while)")
-        gr.Model3D(
-            value=ply_path,  # splat file
-            label="3D Scene",
-        )
+        gr.Model3D(value=ply_path, label="3D Scene")
     demo.launch(share=True)
