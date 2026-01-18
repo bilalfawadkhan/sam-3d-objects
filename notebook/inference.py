@@ -20,7 +20,6 @@ import torch
 import utils3d
 from omegaconf import OmegaConf, DictConfig, ListConfig
 from hydra.utils import instantiate, get_method
-from pytorch3d.transforms import quaternion_multiply, quaternion_invert
 
 import sam3d_objects  # REMARK(Pierre) : do not remove this import
 from sam3d_objects.pipeline.inference_pipeline_pointmap import InferencePipelinePointMap
@@ -233,6 +232,35 @@ def normalized_gaussian(scene_gs, in_place=False, outlier_percentile=None):
     scene_gs.mininum_kernel_size /= inv_scale.item()
     scene_gs.from_scaling(norm_scale)
     return scene_gs
+    
+def quaternion_invert(q: torch.Tensor) -> torch.Tensor:
+    """
+    Invert a quaternion. Assumes q is (..., 4) in (w, x, y, z) format.
+    For unit quaternions, inverse == conjugate.
+    """
+    # conjugate
+    w, x, y, z = q.unbind(-1)
+    q_conj = torch.stack((w, -x, -y, -z), dim=-1)
+
+    # if not perfectly unit, divide by norm^2
+    denom = (q * q).sum(dim=-1, keepdim=True).clamp_min(1e-12)
+    return q_conj / denom
+
+
+def quaternion_multiply(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    Multiply two quaternions. Assumes a and b are (..., 4) in (w, x, y, z) format.
+    Returns (..., 4) in (w, x, y, z).
+    """
+    aw, ax, ay, az = a.unbind(-1)
+    bw, bx, by, bz = b.unbind(-1)
+
+    w = aw * bw - ax * bx - ay * by - az * bz
+    x = aw * bx + ax * bw + ay * bz - az * by
+    y = aw * by - ax * bz + ay * bw + az * bx
+    z = aw * bz + ax * by - ay * bx + az * bw
+
+    return torch.stack((w, x, y, z), dim=-1)
 
 
 def make_scene(*outputs, in_place=False):
