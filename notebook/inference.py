@@ -7,33 +7,24 @@ os.environ["LIDRA_SKIP_INIT"] = "true"
 
 import sys
 from typing import Union, Optional, List, Callable
-import numpy as np
-from PIL import Image
-from omegaconf import OmegaConf, DictConfig, ListConfig
-from hydra.utils import instantiate, get_method
-import torch
 import math
-import utils3d
+import builtins
 import shutil
 import subprocess
-import seaborn as sns
-from PIL import Image
-import numpy as np
-try:
-    import gradio as gr
-except ImportError:
-    gr = None
-import matplotlib.pyplot as plt
 from copy import deepcopy
-from kaolin.visualize import IpyTurntableVisualizer
-from kaolin.render.camera import Camera, CameraExtrinsics, PinholeIntrinsics
-import builtins
+
+import numpy as np
+from PIL import Image
+
+import torch
+import utils3d
+from omegaconf import OmegaConf, DictConfig, ListConfig
+from hydra.utils import instantiate, get_method
 from pytorch3d.transforms import quaternion_multiply, quaternion_invert
 
 import sam3d_objects  # REMARK(Pierre) : do not remove this import
 from sam3d_objects.pipeline.inference_pipeline_pointmap import InferencePipelinePointMap
 from sam3d_objects.model.backbone.tdfy_dit.utils import render_utils
-
 from sam3d_objects.utils.visualization import SceneVisualizer
 
 __all__ = ["Inference"]
@@ -132,6 +123,7 @@ def _yaw_pitch_r_fov_to_extrinsics_intrinsics(yaws, pitchs, rs, fovs):
         rs = [rs] * len(yaws)
     if not isinstance(fovs, list):
         fovs = [fovs] * len(yaws)
+
     extrinsics = []
     intrinsics = []
     for yaw, pitch, r, fov in zip(yaws, pitchs, rs, fovs):
@@ -156,6 +148,7 @@ def _yaw_pitch_r_fov_to_extrinsics_intrinsics(yaws, pitchs, rs, fovs):
         intr = utils3d.torch.intrinsics_from_fov_xy(fov, fov)
         extrinsics.append(extr)
         intrinsics.append(intr)
+
     if not is_list:
         extrinsics = extrinsics[0]
         intrinsics = intrinsics[0]
@@ -173,10 +166,7 @@ def render_video(
     yaw_start_deg=-90,
     **kwargs,
 ):
-
-    yaws = (
-        torch.linspace(0, 2 * torch.pi, num_frames) + math.radians(yaw_start_deg)
-    ).tolist()
+    yaws = (torch.linspace(0, 2 * torch.pi, num_frames) + math.radians(yaw_start_deg)).tolist()
     pitch = [math.radians(pitch_deg)] * num_frames
 
     extr, intr = _yaw_pitch_r_fov_to_extrinsics_intrinsics(yaws, pitch, r, fov)
@@ -226,9 +216,7 @@ def normalized_gaussian(scene_gs, in_place=False, outlier_percentile=None):
     orig_scale = scene_gs.get_scaling
 
     active_mask = (scene_gs.get_opacity > 0.9).squeeze()
-    inv_scale = (
-        orig_xyz[active_mask].max(dim=0)[0] - orig_xyz[active_mask].min(dim=0)[0]
-    ).max()
+    inv_scale = (orig_xyz[active_mask].max(dim=0)[0] - orig_xyz[active_mask].min(dim=0)[0]).max()
     norm_scale = orig_scale / inv_scale
     norm_xyz = orig_xyz / inv_scale
 
@@ -236,16 +224,8 @@ def normalized_gaussian(scene_gs, in_place=False, outlier_percentile=None):
         lower_bound_xyz = torch.min(norm_xyz[active_mask], dim=0)[0]
         upper_bound_xyz = torch.max(norm_xyz[active_mask], dim=0)[0]
     else:
-        lower_bound_xyz = torch.quantile(
-            norm_xyz[active_mask],
-            outlier_percentile,
-            dim=0,
-        )
-        upper_bound_xyz = torch.quantile(
-            norm_xyz[active_mask],
-            1.0 - outlier_percentile,
-            dim=0,
-        )
+        lower_bound_xyz = torch.quantile(norm_xyz[active_mask], outlier_percentile, dim=0)
+        upper_bound_xyz = torch.quantile(norm_xyz[active_mask], 1.0 - outlier_percentile, dim=0)
 
     center = (lower_bound_xyz + upper_bound_xyz) / 2
     norm_xyz = norm_xyz - center
@@ -270,13 +250,15 @@ def make_scene(*outputs, in_place=False):
             scale_l2c=output["scale"],
         )
         output["gaussian"][0].from_xyz(PC.points_list()[0])
-        # must ... ROTATE
+
+        # rotate gaussians
         output["gaussian"][0].from_rotation(
             quaternion_multiply(
                 quaternion_invert(output["rotation"]),
                 output["gaussian"][0].get_rotation,
             )
         )
+
         scale = output["gaussian"][0].get_scaling
         adjusted_scale = scale * output["scale"]
         assert (
@@ -293,10 +275,7 @@ def make_scene(*outputs, in_place=False):
             ),
         )
         output["gaussian"][0].from_scaling(adjusted_scale)
-        minimum_kernel_size = min(
-            minimum_kernel_size,
-            output["gaussian"][0].mininum_kernel_size,
-        )
+        minimum_kernel_size = min(minimum_kernel_size, output["gaussian"][0].mininum_kernel_size)
         all_outs.append(output)
 
     # merge gaussians
@@ -305,9 +284,7 @@ def make_scene(*outputs, in_place=False):
     for out in all_outs[1:]:
         out_gs = out["gaussian"][0]
         scene_gs._xyz = torch.cat([scene_gs._xyz, out_gs._xyz], dim=0)
-        scene_gs._features_dc = torch.cat(
-            [scene_gs._features_dc, out_gs._features_dc], dim=0
-        )
+        scene_gs._features_dc = torch.cat([scene_gs._features_dc, out_gs._features_dc], dim=0)
         scene_gs._scaling = torch.cat([scene_gs._scaling, out_gs._scaling], dim=0)
         scene_gs._rotation = torch.cat([scene_gs._rotation, out_gs._rotation], dim=0)
         scene_gs._opacity = torch.cat([scene_gs._opacity, out_gs._opacity], dim=0)
@@ -315,16 +292,13 @@ def make_scene(*outputs, in_place=False):
     return scene_gs
 
 
-def check_target(
-    target: str,
-    whitelist_filters: List[Callable],
-    blacklist_filters: List[Callable],
-):
+def check_target(target: str, whitelist_filters: List[Callable], blacklist_filters: List[Callable]):
     if any(filt(target) for filt in whitelist_filters):
         if not any(filt(target) for filt in blacklist_filters):
             return
     raise RuntimeError(
-        f"target '{target}' is not allowed to be hydra instantiated, if this is a mistake, please do modify the whitelist_filters / blacklist_filters"
+        f"target '{target}' is not allowed to be hydra instantiated, "
+        "if this is a mistake, please do modify the whitelist_filters / blacklist_filters"
     )
 
 
@@ -367,7 +341,7 @@ def load_single_mask(folder_path, index=0, extension=".png"):
 def load_masks(folder_path, indices_list=None, extension=".png"):
     masks = []
     indices_list = [] if indices_list is None else list(indices_list)
-    if not len(indices_list) > 0:  # get all all masks if not provided
+    if not len(indices_list) > 0:  # get all masks if not provided
         idx = 0
         while os.path.exists(os.path.join(folder_path, f"{idx}{extension}")):
             indices_list.append(idx)
@@ -379,42 +353,3 @@ def load_masks(folder_path, indices_list=None, extension=".png"):
         mask = load_mask(mask_path)
         masks.append(mask)
     return masks
-
-
-def display_image(image, masks=None):
-    def imshow(image, ax):
-        ax.axis("off")
-        ax.imshow(image)
-
-    grid = (1, 1) if masks is None else (2, 2)
-    fig, axes = plt.subplots(*grid)
-    if masks is not None:
-        mask_colors = sns.color_palette("husl", len(masks))
-        black_image = np.zeros_like(image[..., :3], dtype=float)  # background
-        mask_display = np.copy(black_image)
-        mask_union = np.zeros_like(image[..., :3])
-        for i, mask in enumerate(masks):
-            mask_display[mask] = mask_colors[i]
-            mask_union |= mask[..., None] if mask.ndim == 2 else mask
-        imshow(black_image, axes[0, 1])
-        imshow(mask_display, axes[1, 0])
-        imshow(image * mask_union, axes[1, 1])
-
-    image_axe = axes if masks is None else axes[0, 0]
-    imshow(image, image_axe)
-
-    fig.tight_layout(pad=0)
-    fig.show()
-
-
-def interactive_visualizer(ply_path):
-    if gr is None:
-        raise RuntimeError(
-            "Gradio is not installed. Install it (`pip install gradio`) "
-            "or don't call interactive_visualizer()."
-        )
-
-    with gr.Blocks() as demo:
-        gr.Markdown("# 3D Gaussian Splatting (black-screen loading might take a while)")
-        gr.Model3D(value=ply_path, label="3D Scene")
-    demo.launch(share=True)
